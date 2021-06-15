@@ -1,6 +1,9 @@
 package com.cloudinteractive.mobileffmpeg
 
+import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -25,6 +28,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.URLEncoder
+import java.util.*
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
@@ -35,6 +40,8 @@ class MainActivity : AppCompatActivity() {
 
     private var inputVideoFilePath: String? = null
     private var videoFileName: String? = null
+
+    private val REQUEST_CODE_PICK_FILE = 1111
 
     var endTime: Long? = null
 
@@ -104,16 +111,10 @@ class MainActivity : AppCompatActivity() {
 
                             }
 
-//                        val duration = items.firstOrNull { item -> item.contains("Duration") }
-
-//                        Log.e(TAG, duration!!)
                         } else {
                             endTime = null
 
                             output = Config.getLastCommandOutput()
-
-
-//                        Toast.makeText(this@MainActivity, "FFprobe fail !", Toast.LENGTH_LONG).show()
                         }
 
                         withContext(Dispatchers.Main) {
@@ -150,7 +151,16 @@ class MainActivity : AppCompatActivity() {
         binding.tvProbe.movementMethod = ScrollingMovementMethod()
 
         binding.btnPick.setOnClickListener {
-            getContent.launch("video/*")
+//            getContent.launch("video/*")
+
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "video/*"
+//                putExtra(Intent.EXTRA_MIME_TYPES, MimeType.SUPPORTED_FORMAT)
+                putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+//                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
+            startActivityForResult(intent, REQUEST_CODE_PICK_FILE)
         }
 
         binding.btnRun.isEnabled = false
@@ -168,18 +178,20 @@ class MainActivity : AppCompatActivity() {
                 Log.e(TAG, "start: ${binding.rsDuration.values[0]}")
                 Log.e(TAG, "end: ${binding.rsDuration.values[1]}")
 
-                val command = "-i $inputVideoFilePath -ss ${
+                val command = "-ss ${
                     (1000 * binding.rsDuration.values[0]).toLong().toFFMpegFormat()
-                } -to ${
+                } -i $inputVideoFilePath -to ${
                     (1000 * binding.rsDuration.values[1]).toLong().toFFMpegFormat()
-                } -acodec copy -vcodec copy ${newFile.absolutePath}"
+                } -acodec copy -vcodec copy ${newFile.absolutePath.encode()}"
                     .also { Log.e(TAG, it) }
 
-                FFmpeg.execute(command)
+                val rc = FFmpeg.execute(command)
 
                 withContext(Dispatchers.Main) {
                     binding.progressBar.visibility = GONE
-                    Toast.makeText(this@MainActivity, "$newFileName 完成", Toast.LENGTH_LONG).show()
+                    if (rc == RETURN_CODE_SUCCESS)
+                        Toast.makeText(this@MainActivity, "$newFileName 完成", Toast.LENGTH_LONG).show()
+                    binding.tvProbe.text = Config.getLastCommandOutput()
                 }
             }
         }
@@ -220,6 +232,78 @@ class MainActivity : AppCompatActivity() {
             )
         }
     }
+
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode == REQUEST_CODE_PICK_FILE) {
+
+            if (resultCode == Activity.RESULT_OK) {
+                data?.data?.let {
+                    getRealPathFromURI_API19(this, it)
+                        .also { path ->
+
+                            // test get duration
+                            val metaRetriever = MediaMetadataRetriever().apply {
+                                setDataSource(path)
+                            }
+                            val metaDuration = metaRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION) ?: "null"
+                            Log.e(TAG, metaDuration)
+
+                            inputVideoFilePath = path.encode()
+                            videoFileName = path.substring(path.lastIndexOf("/")+1)
+                        }
+
+                    Log.e(TAG, "$inputVideoFilePath  $videoFileName")
+                    lifecycleScope.launch(Dispatchers.IO) {
+
+                        val output: String
+
+                        if (FFprobe.execute("-skip_frame nokey -select_streams v:0 -show_entries frame=pkt_pts_time -of csv=print_section=0 -i $inputVideoFilePath") == RETURN_CODE_SUCCESS) {
+                            output = Config.getLastCommandOutput()
+
+                            binding.tvProbe.text = output
+                            // 找出 Duration
+                            val items = output.split("\n")
+                            val durationString = items.find { item -> item.contains("Duration") }
+                                ?.split(",")
+                                ?.get(0)
+                                ?.trim()
+                                ?.split(" ")
+                                ?.get(1)
+
+                            durationString?.let { duration ->
+                                Log.e(TAG, duration)
+                                val splits = duration.split(":")
+
+                                if (splits.size != 3)
+                                    throw IllegalStateException("duration error")
+                                endTime =
+                                    splits[0].toLong() * 60 * 60 + splits[1].toLong() * 60 + splits[2].split(
+                                        "."
+                                    )[0].toLong()
+
+                                Log.e(TAG, endTime.toString())
+
+
+                            }
+
+                        } else {
+                            endTime = null
+
+                            output = Config.getLastCommandOutput()
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            binding.tvProbe.text = output
+                            initSetting(endTime)
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fun Long.toFFMpegFormat(): String {
@@ -237,4 +321,9 @@ fun Long.toFFMpegFormat(): String {
             )
         )
     )
+}
+
+
+fun String.encode(): String {
+    return this.replace(" ", "%20")
 }
