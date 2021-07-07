@@ -19,16 +19,14 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.arthenica.mobileffmpeg.Config
-import com.arthenica.mobileffmpeg.Config.RETURN_CODE_SUCCESS
-import com.arthenica.mobileffmpeg.FFmpeg
-import com.arthenica.mobileffmpeg.FFprobe
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.FFprobeKit
+import com.arthenica.ffmpegkit.ReturnCode
 import com.cloudinteractive.mobileffmpeg.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.net.URLEncoder
 import java.util.*
 import java.util.concurrent.TimeUnit
 
@@ -80,20 +78,25 @@ class MainActivity : AppCompatActivity() {
 
                     lifecycleScope.launch(Dispatchers.IO) {
 
-                        val output: String
 
-                        if (FFprobe.execute("-i $inputVideoFilePath") == RETURN_CODE_SUCCESS) {
-                            output = Config.getLastCommandOutput()
+                        val probeSession = FFprobeKit.execute("-i $inputVideoFilePath")
 
-                            binding.tvProbe.text = output
+                        if (ReturnCode.isSuccess(probeSession.returnCode)) {
+//                            output = Config.getLastCommandOutput()
+
+
+
+                            binding.tvProbe.text = probeSession.output
                             // 找出 Duration
-                            val items = output.split("\n")
+                            val items = probeSession.output.split("\n")
                             val durationString = items.find { item -> item.contains("Duration") }
                                 ?.split(",")
                                 ?.get(0)
                                 ?.trim()
                                 ?.split(" ")
                                 ?.get(1)
+
+
 
                             durationString?.let { duration ->
                                 Log.e(TAG, duration)
@@ -113,12 +116,10 @@ class MainActivity : AppCompatActivity() {
 
                         } else {
                             endTime = null
-
-                            output = Config.getLastCommandOutput()
                         }
 
                         withContext(Dispatchers.Main) {
-                            binding.tvProbe.text = output
+                            binding.tvProbe.text = probeSession.output
                             initSetting(endTime)
                         }
                     }
@@ -185,13 +186,13 @@ class MainActivity : AppCompatActivity() {
                 } -acodec copy -vcodec copy ${newFile.absolutePath.encode()}"
                     .also { Log.e(TAG, it) }
 
-                val rc = FFmpeg.execute(command)
+                val session = FFmpegKit.execute(command)
 
                 withContext(Dispatchers.Main) {
                     binding.progressBar.visibility = GONE
-                    if (rc == RETURN_CODE_SUCCESS)
+                    if (ReturnCode.isSuccess(session.returnCode))
                         Toast.makeText(this@MainActivity, "$newFileName 完成", Toast.LENGTH_LONG).show()
-                    binding.tvProbe.text = Config.getLastCommandOutput()
+                    binding.tvProbe.text = session.output
                 }
             }
         }
@@ -258,14 +259,12 @@ class MainActivity : AppCompatActivity() {
                     Log.e(TAG, "$inputVideoFilePath  $videoFileName")
                     lifecycleScope.launch(Dispatchers.IO) {
 
-                        val output: String
+                        val probeSession = FFprobeKit.execute("-skip_frame nokey -select_streams v:0 -show_entries frame=pkt_pts_time -of csv=print_section=0 -i $inputVideoFilePath")
 
-                        if (FFprobe.execute("-skip_frame nokey -select_streams v:0 -show_entries frame=pkt_pts_time -of csv=print_section=0 -i $inputVideoFilePath") == RETURN_CODE_SUCCESS) {
-                            output = Config.getLastCommandOutput()
+                        if (ReturnCode.isSuccess(probeSession.returnCode)) {
 
-                            binding.tvProbe.text = output
                             // 找出 Duration
-                            val items = output.split("\n")
+                            val items = probeSession.output.split("\n")
                             val durationString = items.find { item -> item.contains("Duration") }
                                 ?.split(",")
                                 ?.get(0)
@@ -292,11 +291,11 @@ class MainActivity : AppCompatActivity() {
                         } else {
                             endTime = null
 
-                            output = Config.getLastCommandOutput()
+
                         }
 
                         withContext(Dispatchers.Main) {
-                            binding.tvProbe.text = output
+                            binding.tvProbe.text = probeSession.output
                             initSetting(endTime)
                         }
                     }
